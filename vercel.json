@@ -4,9 +4,11 @@
     { "src": "api/index.js", "use": "@vercel/node" },
     { "src": "public/**/*", "use": "@vercel/static" }
   ],
-  "routes": [
-    { "src": "/api/(.*)", "dest": "/api/index.js" },
-    { "handle": "filesystem" },
-    { "src": "/(.*)", "dest": "/public/index.html" }
+  "cleanUrls": true,
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/index.js" },
+    { "source": "/(.*)\\.(.*)", "destination": "/public/$1.$2" },
+    { "source": "/:business_name", "destination": "/public/marketplace.html" },
+    { "source": "/(.*)", "destination": "/public/index.html" }
   ]
 }
