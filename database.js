@@ -30,7 +30,9 @@ const UserSchema = new mongoose.Schema({
     email: { type: String, required: true, unique: true },
     password: { type: String, required: true },
     business_name: { type: String, required: true },
-    marketplace_enabled: { type: Boolean, default: false }
+    whatsapp_number: { type: String },
+    marketplace_enabled: { type: Boolean, default: false },
+    role: { type: String, default: 'user' }
 });
 
 const ProductSchema = new mongoose.Schema({
@@ -70,9 +72,13 @@ const initializeDatabase = async () => {
             await User.create({
                 email: 'Admin',
                 password: 'Abc@12345',
-                business_name: 'Admin Portal'
+                business_name: 'Admin Portal',
+                role: 'admin'
             });
             console.log('Admin user created.');
+        } else if (adminExists.role !== 'admin') {
+            await User.updateOne({ email: 'Admin' }, { role: 'admin' });
+            console.log('Admin role updated for existing admin user.');
         }
     } catch (err) {
         console.error('Error initializing default user:', err.message);

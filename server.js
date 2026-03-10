@@ -21,22 +21,22 @@ app.use(express.static(path.join(__dirname, 'public')));
 // ==== AUTH API ====
 
 app.post('/api/auth/register', async (req, res) => {
-    const { email, password, business_name } = req.body;
-    if (!email || !password || !business_name) {
+    const { email, password, business_name, whatsapp_number } = req.body;
+    if (!email || !password || !business_name || !whatsapp_number) {
         return res.status(400).json({ error: 'Missing required fields' });
     }
     
     try {
         const existingUser = await User.findOne({ email });
         if (existingUser) {
-            return res.status(400).json({ error: 'Email already exists' });
+            return res.status(400).json({ error: 'User already exists' });
         }
         
-        const newUser = await User.create({ email, password, business_name });
+        const user = await User.create({ email, password, business_name, whatsapp_number });
         res.status(201).json({ 
-            message: 'Registered successfully', 
-            token: newUser._id.toString(), 
-            business_name 
+            token: user._id.toString(), 
+            business_name: user.business_name, 
+            role: user.role 
         });
     } catch (err) {
         return res.status(500).json({ error: err.message });
@@ -54,7 +54,7 @@ app.post('/api/auth/login', async (req, res) => {
         if (!user) {
             return res.status(401).json({ error: 'Invalid credentials' });
         }
-        res.json({ token: user._id.toString(), business_name: user.business_name });
+        res.json({ token: user._id.toString(), business_name: user.business_name, role: user.role });
     } catch (err) {
         return res.status(500).json({ error: err.message });
     }
@@ -83,27 +83,87 @@ app.use('/api', (req, res, next) => {
     return authMiddleware(req, res, next);
 });
 
+// ==== ADMIN API ====
+
+const adminMiddleware = (req, res, next) => {
+    if (req.user && req.user.role === 'admin') {
+        next();
+    } else {
+        res.status(403).json({ error: 'Forbidden: Admins only' });
+    }
+};
+
+app.get('/api/admin/users', adminMiddleware, async (req, res) => {
+    try {
+        const users = await User.find({ role: { $ne: 'admin' } }).select('-password');
+        const mappedUsers = users.map(u => ({
+            id: u._id.toString(),
+            email: u.email,
+            business_name: u.business_name,
+            whatsapp_number: u.whatsapp_number,
+            marketplace_enabled: u.marketplace_enabled,
+            role: u.role
+        }));
+        res.json(mappedUsers);
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/admin/users/:id', adminMiddleware, async (req, res) => {
+    const { email, business_name, whatsapp_number, marketplace_enabled } = req.body;
+    try {
+        const user = await User.findByIdAndUpdate(
+            req.params.id,
+            { email, business_name, whatsapp_number, marketplace_enabled },
+            { new: true }
+        ).select('-password');
+        if (!user) return res.status(404).json({ error: 'User not found' });
+        res.json({ message: 'User updated successfully' });
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/admin/users/:id', adminMiddleware, async (req, res) => {
+    try {
+        const userId = req.params.id;
+        const user = await User.findByIdAndDelete(userId);
+        if (!user) return res.status(404).json({ error: 'User not found' });
+        
+        // Also delete associated products and invoices
+        await Product.deleteMany({ user_id: userId });
+        await Invoice.deleteMany({ user_id: userId });
+        
+        res.json({ message: 'User and all associated data deleted successfully' });
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
 // ==== DASHBOARD API ====
 
 app.get('/api/dashboard', async (req, res) => {
     const today = new Date().toISOString().split('T')[0];
     const currentMonth = today.slice(0, 7); // YYYY-MM
-    const userId = req.user._id;
+    
+    // Admin query filter bypass
+    const queryFilter = req.user.role === 'admin' ? {} : { user_id: req.user._id };
     
     try {
         // Daily Stats
-        const dailyInvoices = await Invoice.find({ user_id: userId, date: today });
+        const dailyInvoices = await Invoice.find({ ...queryFilter, date: today });
         const totalBillsToday = dailyInvoices.length;
         const dailyIncome = dailyInvoices.reduce((sum, inv) => sum + inv.total_amount, 0);
 
         // Monthly Stats
-        const monthlyInvoices = await Invoice.find({ user_id: userId, date: new RegExp('^' + currentMonth) });
+        const monthlyInvoices = await Invoice.find({ ...queryFilter, date: new RegExp('^' + currentMonth) });
         const totalBillsMonth = monthlyInvoices.length;
         const monthlyIncome = monthlyInvoices.reduce((sum, inv) => sum + inv.total_amount, 0);
 
         // Product Stats
-        const totalProducts = await Product.countDocuments({ user_id: userId });
-        const lowStockProducts = await Product.countDocuments({ user_id: userId, quantity: { $lte: 10 } });
+        const totalProducts = await Product.countDocuments(queryFilter);
+        const lowStockProducts = await Product.countDocuments({ ...queryFilter, quantity: { $lte: 10 } });
 
         res.json({
             totalBillsToday,
@@ -120,10 +180,21 @@ app.get('/api/dashboard', async (req, res) => {
 
 app.get('/api/dashboard/low-stock', async (req, res) => {
     try {
-        const products = await Product.find({ user_id: req.user._id, quantity: { $lte: 10 } })
+        const queryFilter = req.user.role === 'admin' ? {} : { user_id: req.user._id };
+        const products = await Product.find({ ...queryFilter, quantity: { $lte: 10 } })
+            .populate('user_id', 'business_name')
             .sort({ quantity: 1 })
             .limit(10);
-        res.json(products);
+            
+        const mappedProducts = products.map(p => ({
+            id: p._id.toString(),
+            name: p.name,
+            quantity: p.quantity,
+            price: p.price,
+            owner_name: p.user_id ? p.user_id.business_name : 'Unknown'
+        }));
+        
+        res.json(mappedProducts);
     } catch (err) {
         return res.status(500).json({ error: err.message });
     }
@@ -133,7 +204,10 @@ app.get('/api/dashboard/low-stock', async (req, res) => {
 
 app.get('/api/products', async (req, res) => {
     try {
-        const products = await Product.find({ user_id: req.user._id }).sort({ name: 1 });
+        const queryFilter = req.user.role === 'admin' ? {} : { user_id: req.user._id };
+        const products = await Product.find(queryFilter)
+            .populate('user_id', 'business_name')
+            .sort({ name: 1 });
         
         // Map _id to id for the frontend
         const mappedProducts = products.map(p => ({
@@ -141,7 +215,8 @@ app.get('/api/products', async (req, res) => {
             name: p.name,
             quantity: p.quantity,
             price: p.price,
-            image: p.image
+            image: p.image,
+            owner_name: p.user_id ? p.user_id.business_name : 'Unknown'
         }));
         
         res.json(mappedProducts);
@@ -173,8 +248,9 @@ app.post('/api/products', async (req, res) => {
 app.put('/api/products/:id', async (req, res) => {
     const { name, quantity, price, image } = req.body;
     try {
+        const queryFilter = req.user.role === 'admin' ? { _id: req.params.id } : { _id: req.params.id, user_id: req.user._id };
         const product = await Product.findOneAndUpdate(
-            { _id: req.params.id, user_id: req.user._id },
+            queryFilter,
             { name, quantity, price, image },
             { new: true }
         );
@@ -187,7 +263,8 @@ app.put('/api/products/:id', async (req, res) => {
 
 app.delete('/api/products/:id', async (req, res) => {
     try {
-        const product = await Product.findOneAndDelete({ _id: req.params.id, user_id: req.user._id });
+        const queryFilter = req.user.role === 'admin' ? { _id: req.params.id } : { _id: req.params.id, user_id: req.user._id };
+        const product = await Product.findOneAndDelete(queryFilter);
         if (!product) return res.status(404).json({ error: 'Product not found' });
         res.json({ message: 'Product deleted successfully' });
     } catch (err) {
@@ -199,7 +276,7 @@ app.delete('/api/products/:id', async (req, res) => {
 
 app.get('/api/invoices', async (req, res) => {
     const { date, month } = req.query;
-    let query = { user_id: req.user._id };
+    let query = req.user.role === 'admin' ? {} : { user_id: req.user._id };
 
     if (date) {
         query.date = date;
@@ -208,7 +285,9 @@ app.get('/api/invoices', async (req, res) => {
     }
 
     try {
-        const invoices = await Invoice.find(query).sort({ date: -1, time: -1 });
+        const invoices = await Invoice.find(query)
+            .populate('user_id', 'business_name')
+            .sort({ date: -1, time: -1 });
         
         // Map _id to id for frontend
         const mappedInvoices = invoices.map(inv => ({
@@ -216,7 +295,8 @@ app.get('/api/invoices', async (req, res) => {
             invoice_number: inv.invoice_number,
             date: inv.date,
             time: inv.time,
-            total_amount: inv.total_amount
+            total_amount: inv.total_amount,
+            owner_name: inv.user_id ? inv.user_id.business_name : 'Unknown'
         }));
         
         res.json(mappedInvoices);
@@ -227,7 +307,8 @@ app.get('/api/invoices', async (req, res) => {
 
 app.get('/api/invoices/:id', async (req, res) => {
     try {
-        const invoice = await Invoice.findOne({ _id: req.params.id, user_id: req.user._id });
+        const queryFilter = req.user.role === 'admin' ? { _id: req.params.id } : { _id: req.params.id, user_id: req.user._id };
+        const invoice = await Invoice.findOne(queryFilter).populate('user_id', 'business_name');
         if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
         
         const response = {
@@ -305,12 +386,34 @@ app.post('/api/invoices', async (req, res) => {
     }
 });
 
+app.delete('/api/invoices/:id', async (req, res) => {
+    try {
+        const queryFilter = req.user.role === 'admin' ? { _id: req.params.id } : { _id: req.params.id, user_id: req.user._id };
+        const invoice = await Invoice.findOneAndDelete(queryFilter);
+        if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+        
+        // Need to add back the stock quantities
+        if (invoice.user_id) {
+            for (const item of invoice.items) {
+                await Product.findOneAndUpdate(
+                    { name: item.product_name, user_id: invoice.user_id },
+                    { $inc: { quantity: item.quantity } }
+                );
+            }
+        }
+        res.json({ message: 'Invoice deleted successfully. Inventory restocked.' });
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
 // ==== REPORTS API ====
 
 app.get('/api/reports/sales', async (req, res) => {
     try {
+        const queryMatch = req.user.role === 'admin' ? {} : { user_id: req.user._id };
         const result = await Invoice.aggregate([
-            { $match: { user_id: req.user._id } },
+            { $match: queryMatch },
             { $group: { _id: "$date", total_sales: { $sum: "$total_amount" } } },
             { $project: { date: "$_id", total_sales: 1, _id: 0 } },
             { $sort: { date: -1 } }
@@ -323,8 +426,9 @@ app.get('/api/reports/sales', async (req, res) => {
 
 app.get('/api/reports/product-sales', async (req, res) => {
     try {
+        const queryMatch = req.user.role === 'admin' ? {} : { user_id: req.user._id };
         const result = await Invoice.aggregate([
-            { $match: { user_id: req.user._id } },
+            { $match: queryMatch },
             { $unwind: "$items" },
             { $group: { 
                 _id: "$items.product_name", 
@@ -353,13 +457,13 @@ app.post('/api/marketplace/enable', async (req, res) => {
 
 app.get('/api/public/store/:business_name', async (req, res) => {
     try {
-        const user = await User.findOne({ business_name: req.params.business_name });
-        if (!user || user.marketplace_enabled !== true) {
+        const storeOwner = await User.findOne({ business_name: req.params.business_name });
+        if (!storeOwner || storeOwner.marketplace_enabled !== true) {
             return res.status(404).json({ error: 'Store not found or marketplace is disabled' });
         }
         
         // Return products that have stock
-        const products = await Product.find({ user_id: user._id, quantity: { $gt: 0 } }).sort({ name: 1 });
+        const products = await Product.find({ user_id: storeOwner._id, quantity: { $gt: 0 } }).sort({ name: 1 });
         const mappedProducts = products.map(p => ({
             id: p._id.toString(),
             name: p.name,
@@ -367,8 +471,10 @@ app.get('/api/public/store/:business_name', async (req, res) => {
             image: p.image
         }));
         
+        // Return store info and products
         res.json({
-            business_name: user.business_name,
+            business_name: storeOwner.business_name,
+            whatsapp_number: storeOwner.whatsapp_number,
             products: mappedProducts
         });
     } catch (err) {

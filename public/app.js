@@ -2,6 +2,7 @@ const API_BASE = '/api';
 
 let authToken = localStorage.getItem('pos_token') || null;
 let currentBusiness = localStorage.getItem('pos_business') || '';
+let currentRole = localStorage.getItem('pos_role') || 'user';
 
 // ==== AUTH LOGIC ====
 const authOverlay = document.getElementById('auth-overlay');
@@ -34,7 +35,7 @@ loginForm.addEventListener('submit', async (e) => {
         const data = await res.json();
         if(!res.ok) throw new Error(data.error || 'Login failed');
         
-        loginSuccess(data.token, data.business_name);
+        loginSuccess(data.token, data.business_name, data.role);
     } catch(err) { alert(err.message); }
 });
 
@@ -43,33 +44,38 @@ registerForm.addEventListener('submit', async (e) => {
     const email = document.getElementById('reg-email').value;
     const password = document.getElementById('reg-password').value;
     const business_name = document.getElementById('reg-businessName').value;
+    const whatsapp_number = document.getElementById('reg-whatsapp').value;
     
     try {
         const res = await fetch(`${API_BASE}/auth/register`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, password, business_name })
+            body: JSON.stringify({ email, password, business_name, whatsapp_number })
         });
         const data = await res.json();
         if(!res.ok) throw new Error(data.error || 'Registration failed');
         
-        loginSuccess(data.token, data.business_name);
+        loginSuccess(data.token, data.business_name, data.role);
     } catch(err) { alert(err.message); }
 });
 
-function loginSuccess(token, businessName) {
+function loginSuccess(token, businessName, role = 'user') {
     authToken = token;
     currentBusiness = businessName;
+    currentRole = role;
     localStorage.setItem('pos_token', token);
     localStorage.setItem('pos_business', businessName);
+    localStorage.setItem('pos_role', role);
     checkAuth();
 }
 
 document.getElementById('btn-logout').addEventListener('click', () => {
     authToken = null;
     currentBusiness = '';
+    currentRole = 'user';
     localStorage.removeItem('pos_token');
     localStorage.removeItem('pos_business');
+    localStorage.removeItem('pos_role');
     checkAuth();
 });
 
@@ -77,6 +83,13 @@ function checkAuth() {
     if (authToken) {
         authOverlay.classList.remove('active');
         document.getElementById('business-name-display').textContent = currentBusiness;
+        
+        if (currentRole === 'admin') {
+            document.getElementById('nav-item-admin').style.display = 'block';
+        } else {
+            document.getElementById('nav-item-admin').style.display = 'none';
+        }
+        
         // Re-initialize data
         loadDashboard();
     } else {
@@ -115,6 +128,7 @@ const pageTitle = document.getElementById('page-title');
 const modalOverlay = document.getElementById('modal-overlay');
 const productModal = document.getElementById('product-modal');
 const invoiceModal = document.getElementById('invoice-modal');
+const adminUserModal = document.getElementById('admin-user-modal');
 
 // ==== INITIALIZATION ====
 document.addEventListener('DOMContentLoaded', () => {
@@ -151,6 +165,7 @@ function setupNavigation() {
             if(target === 'pos-view') loadPOS();
             if(target === 'invoices-view') loadInvoices();
             if(target === 'reports-view') loadReports();
+            if(target === 'admin-view') loadAdminUsers();
         });
     });
     
@@ -163,13 +178,14 @@ function setupNavigation() {
                 if (res.ok) {
                     const domain = window.location.origin;
                     const url = `${domain}/${encodeURIComponent(currentBusiness)}`;
-                    alert(`Marketplace Enabled!\nYour public store is available at:\n${url}`);
+                    // Open the marketplace URL in a new window immediately
+                    window.open(url, '_blank');
                 } else {
-                    alert('Failed to enable marketplace');
+                    alert('Failed to enable marketplace. Make sure you have restarted your server.');
                 }
             } catch (err) {
                 console.error(err);
-                alert('Error enabling marketplace');
+                alert('Error enabling marketplace. Did you restart the server?');
             }
         });
     }
@@ -178,6 +194,7 @@ function setupNavigation() {
 function setupModals() {
     document.getElementById('btn-close-modal').addEventListener('click', hideModal);
     document.getElementById('btn-close-invoice-modal').addEventListener('click', hideModal);
+    document.getElementById('btn-close-admin-modal').addEventListener('click', hideModal);
     
     // Add product
     document.getElementById('btn-add-product').addEventListener('click', () => {
@@ -265,6 +282,29 @@ function setupModals() {
     document.getElementById('btn-print-receipt').addEventListener('click', () => {
         window.print();
     });
+    
+    // Admin User Edit Form
+    document.getElementById('admin-user-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const id = document.getElementById('admin-user-id').value;
+        const business_name = document.getElementById('admin-business-name').value;
+        const email = document.getElementById('admin-email').value;
+        const whatsapp_number = document.getElementById('admin-whatsapp').value;
+        const marketplace_enabled = document.getElementById('admin-marketplace-enabled').checked;
+        
+        try {
+            await fetchAuth(`${API_BASE}/admin/users/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ business_name, email, whatsapp_number, marketplace_enabled })
+            });
+            hideModal();
+            loadAdminUsers();
+        } catch (err) {
+            console.error(err);
+            alert('Error updating user');
+        }
+    });
 }
 
 function showModal(modal) {
@@ -337,8 +377,13 @@ async function loadDashboard() {
         
         alerts.forEach(item => {
             const tr = document.createElement('tr');
+            let nameHTML = `<td>${item.name}</td>`;
+            if (currentRole === 'admin') {
+                nameHTML = `<td>${item.name} <div style="font-size:11px;color:var(--primary);margin-top:2px;">[${item.owner_name}]</div></td>`;
+            }
+            
             tr.innerHTML = `
-                <td>${item.name}</td>
+                ${nameHTML}
                 <td class="text-danger">${item.quantity}</td>
                 <td>${formatCurrency(item.price)}</td>
             `;
@@ -350,6 +395,8 @@ async function loadDashboard() {
 }
 
 // ==== INVENTORY ====
+let adminInventoryFilter = null;
+
 async function loadInventory() {
     try {
         const res = await fetchAuth(`${API_BASE}/products`);
@@ -357,11 +404,28 @@ async function loadInventory() {
         const tbody = document.querySelector('#inventory-table tbody');
         tbody.innerHTML = '';
         
-        products.forEach(p => {
+        // Handle admin inventory filtering
+        let productsToRender = products;
+        const filterBadge = document.getElementById('inventory-filter-badge');
+        if (currentRole === 'admin' && adminInventoryFilter) {
+            productsToRender = products.filter(p => p.owner_name === adminInventoryFilter);
+            document.getElementById('inventory-filter-name').textContent = adminInventoryFilter;
+            filterBadge.style.display = 'flex';
+        } else {
+            filterBadge.style.display = 'none';
+        }
+        
+        productsToRender.forEach(p => {
             const imgHtml = p.image ? `<img src="${p.image}" style="width:40px;height:40px;border-radius:8px;object-fit:cover;">` : `<div style="width:40px;height:40px;border-radius:8px;background:#e2e8f0;display:flex;align-items:center;justify-content:center;font-size:10px;color:#64748b;">No Img</div>`;
             const tr = document.createElement('tr');
+            
+            let nameDisplay = `<span>${p.name}</span>`;
+            if (currentRole === 'admin') {
+                nameDisplay = `<div><span>${p.name}</span><div style="font-size:11px;color:var(--primary);margin-top:2px;">[${p.owner_name}]</div></div>`;
+            }
+            
             tr.innerHTML = `
-                <td style="display:flex;align-items:center;gap:12px;">${imgHtml} <span>${p.name}</span></td>
+                <td style="display:flex;align-items:center;gap:12px;">${imgHtml} ${nameDisplay}</td>
                 <td class="${p.quantity <= 10 ? 'text-danger' : ''}">${p.quantity}</td>
                 <td>${formatCurrency(p.price)}</td>
                 <td>
@@ -376,6 +440,11 @@ async function loadInventory() {
         console.error(err);
     }
 }
+
+document.getElementById('btn-clear-inventory-filter').addEventListener('click', () => {
+    adminInventoryFilter = null;
+    loadInventory();
+});
 
 // Event Delegation for Edit and Delete buttons
 document.querySelector('#inventory-table tbody').addEventListener('click', (e) => {
@@ -627,14 +696,22 @@ async function loadInvoices() {
         
         invoicesList.forEach(inv => {
             const tr = document.createElement('tr');
+            let adminActions = '';
+            let invDisplay = inv.invoice_number;
+            if (currentRole === 'admin') {
+                invDisplay += `<div style="font-size:11px;color:var(--primary);margin-top:2px;">[${inv.owner_name}]</div>`;
+                adminActions = `<button class="btn btn-danger btn-icon-only delete-invoice-btn" style="margin-left: 4px;" data-id="${inv.id}"><i class='bx bx-trash'></i></button>`;
+            }
+            
             tr.innerHTML = `
-                <td>${inv.invoice_number}</td>
+                <td>${invDisplay}</td>
                 <td>${inv.date}</td>
                 <td>${inv.time}</td>
                 <td style="font-weight:bold">${formatCurrency(inv.total_amount)}</td>
                 <td>
                     <button class="btn btn-outline btn-icon-only view-invoice-btn" data-id="${inv.id}"><i class='bx bx-show'></i></button>
                     <button class="btn btn-primary btn-icon-only print-invoice-btn" data-id="${inv.id}"><i class='bx bx-printer'></i></button>
+                    ${adminActions}
                 </td>
             `;
             tbody.appendChild(tr);
@@ -648,6 +725,18 @@ async function loadInvoices() {
                     const inv = await res.json();
                     showInvoicePrintout(inv);
                 } catch(err) { console.error(err); }
+            });
+        });
+        
+        document.querySelectorAll('.delete-invoice-btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                if(confirm('Are you sure you want to delete this invoice? (This will restock the inventory automatically)')) {
+                    const id = e.currentTarget.dataset.id;
+                    try {
+                        await fetchAuth(`${API_BASE}/invoices/${id}`, { method: 'DELETE' });
+                        loadInvoices();
+                    } catch(err) { console.error(err); }
+                }
             });
         });
         
@@ -717,3 +806,82 @@ async function loadReports() {
         console.error(err);
     }
 }
+
+// ==== ADMIN VIEW ====
+let adminUsersList = [];
+
+async function loadAdminUsers() {
+    try {
+        const res = await fetchAuth(`${API_BASE}/admin/users`);
+        adminUsersList = await res.json();
+        
+        const tbody = document.querySelector('#admin-users-table tbody');
+        tbody.innerHTML = '';
+        
+        adminUsersList.forEach(user => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td>${user.business_name}</td>
+                <td>${user.email}</td>
+                <td>${user.marketplace_enabled ? '<span class="text-success" style="color:var(--success);font-weight:600;">Enabled</span>' : '<span class="text-muted">Disabled</span>'}</td>
+                <td>
+                    <button class="btn btn-outline btn-icon-only view-user-inventory-btn" data-id="${user.id}" title="View Inventory"><i class='bx bx-box'></i></button>
+                    <button class="btn btn-outline btn-icon-only admin-edit-btn" data-id="${user.id}" title="Edit User"><i class='bx bx-edit'></i></button>
+                    <button class="btn btn-danger btn-icon-only admin-del-btn" data-id="${user.id}" title="Delete User"><i class='bx bx-trash'></i></button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    } catch (err) {
+        console.error(err);
+    }
+}
+
+// Event Delegation for Admin Users Edit/Delete
+document.querySelector('#admin-users-table tbody').addEventListener('click', async (e) => {
+    const viewInvBtn = e.target.closest('.view-user-inventory-btn');
+    if (viewInvBtn) {
+        const id = viewInvBtn.dataset.id;
+        const user = adminUsersList.find(u => u.id === id);
+        if (user) {
+            // Set filter and switch tabs
+            adminInventoryFilter = user.business_name;
+            
+            navLinks.forEach(l => l.classList.remove('active'));
+            document.querySelector('[data-target="inventory-view"]').classList.add('active');
+            
+            views.forEach(v => v.classList.remove('active'));
+            document.getElementById('inventory-view').classList.add('active');
+            
+            pageTitle.textContent = "Inventory";
+            currentTab = 'inventory-view';
+            loadInventory();
+        }
+        return;
+    }
+
+    const editBtn = e.target.closest('.admin-edit-btn');
+    if (editBtn) {
+        const id = editBtn.dataset.id;
+        const user = adminUsersList.find(u => u.id === id);
+        if (user) {
+            document.getElementById('admin-user-id').value = user.id;
+            document.getElementById('admin-business-name').value = user.business_name;
+            document.getElementById('admin-email').value = user.email;
+            document.getElementById('admin-whatsapp').value = user.whatsapp_number || '';
+            document.getElementById('admin-marketplace-enabled').checked = user.marketplace_enabled;
+            showModal(adminUserModal);
+        }
+        return;
+    }
+    
+    const delBtn = e.target.closest('.admin-del-btn');
+    if (delBtn) {
+        if(confirm('Are you sure you want to permanently delete this user and ALL their data (products, invoices)?')) {
+            try {
+                await fetchAuth(`${API_BASE}/admin/users/${delBtn.dataset.id}`, { method: 'DELETE' });
+                loadAdminUsers();
+            } catch (err) { console.error(err); }
+        }
+    }
+});

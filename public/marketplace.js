@@ -1,6 +1,7 @@
 const API_BASE = '/api/public/store';
 
 let allProducts = [];
+let storeWhatsappNumber = '';
 
 document.addEventListener('DOMContentLoaded', async () => {
     // Determine the business name from the URL path
@@ -32,6 +33,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('store-name').textContent = data.business_name;
         
         allProducts = data.products;
+        storeWhatsappNumber = data.whatsapp_number || '94711234567'; // Fallback if old user
         
         document.getElementById('loading-spinner').style.display = 'none';
         
@@ -82,6 +84,15 @@ function renderProducts(products) {
                     <div class="product-price">${formatCurrency(p.price)}</div>
                 </div>
             `;
+            
+            // Add WhatsApp click handler
+            card.style.cursor = 'pointer';
+            card.addEventListener('click', () => {
+                const message = `Hi! I am interested in buying: ${p.name}`;
+                const cleanPhone = storeWhatsappNumber.replace(/[^0-9]/g, '');
+                const whatsappUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
+                window.open(whatsappUrl, '_blank');
+            });
             
             grid.appendChild(card);
         });
