@@ -1,4 +1,6 @@
 const mongoose = require('mongoose');
+const bcrypt = require('bcrypt');
+const { encrypt, decrypt } = require('./utils/encryption');
 
 // Global variable to cache the mongoose connection
 let cachedDb = null;
@@ -27,13 +29,25 @@ const connectDB = async () => {
 // -- SCHEMAS --
 
 const UserSchema = new mongoose.Schema({
-    email: { type: String, required: true, unique: true },
+    email: { 
+        type: String, 
+        required: true, 
+        unique: true,
+        set: (v) => v ? encrypt(v.toLowerCase()) : v,
+        get: (v) => v ? decrypt(v) : v
+    },
     password: { type: String, required: true },
     business_name: { type: String, required: true },
     whatsapp_number: { type: String },
     marketplace_enabled: { type: Boolean, default: false },
     role: { type: String, default: 'user' }
+}, {
+    toJSON: { getters: true },
+    toObject: { getters: true }
 });
+
+// Since we'll hash passwords on registration and initial setup directly,
+// we will avoid a pre-save hook to prevent double-hashing when updating users without changing passwords.
 
 const ProductSchema = new mongoose.Schema({
     user_id: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
@@ -67,16 +81,22 @@ const Invoice = mongoose.model('Invoice', InvoiceSchema);
 // Create default admin user
 const initializeDatabase = async () => {
     try {
-        const adminExists = await User.findOne({ email: 'Admin' });
-        if (!adminExists) {
+        const adminEmailObj = encrypt('admin'); // For lookup
+        const adminExists = await User.findOne({ email: adminEmailObj }).collation({ locale: 'en', strength: 2 });
+        
+        // Also checks legacy unencrypted 'Admin' just in case
+        const legacyAdmin = await User.findOne({ email: 'Admin' });
+
+        if (!adminExists && !legacyAdmin) {
+            const hashedPassword = await bcrypt.hash('Mynameis1234', 10);
             await User.create({
-                email: 'Admin',
-                password: 'Abc@12345678',
+                email: 'admin', // The setter handles encryption and lowercasing
+                password: hashedPassword,
                 business_name: 'Admin Portal',
                 role: 'admin'
             });
-            console.log('Admin user created.');
-        } else if (adminExists.role !== 'admin') {
+            console.log('Admin user created securely.');
+        } else if (legacyAdmin && legacyAdmin.role !== 'admin') {
             await User.updateOne({ email: 'Admin' }, { role: 'admin' });
             console.log('Admin role updated for existing admin user.');
         }

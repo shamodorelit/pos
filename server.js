@@ -1,6 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const bcrypt = require('bcrypt');
+const { encrypt } = require('./utils/encryption');
 const { connectDB, initializeDatabase, User, Product, Invoice } = require('./database');
 
 const app = express();
@@ -27,12 +29,19 @@ app.post('/api/auth/register', async (req, res) => {
     }
     
     try {
-        const existingUser = await User.findOne({ email });
+        const encryptedEmail = encrypt(email.toLowerCase());
+        const existingUser = await User.findOne({ email: encryptedEmail }).collation({ locale: 'en', strength: 2 });
         if (existingUser) {
             return res.status(400).json({ error: 'User already exists' });
         }
         
-        const user = await User.create({ email, password, business_name, whatsapp_number });
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const user = await User.create({ 
+            email: email.toLowerCase(), // Mongoose setter will encrypt it
+            password: hashedPassword, 
+            business_name, 
+            whatsapp_number 
+        });
         res.status(201).json({ 
             token: user._id.toString(), 
             business_name: user.business_name, 
@@ -50,10 +59,42 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     try {
-        const user = await User.findOne({ email, password });
+        const encryptedEmail = encrypt(email.toLowerCase());
+        
+        // Find using the encrypted email OR the legacy email
+        const user = await User.findOne({ 
+            $or: [
+                { email: encryptedEmail },
+                { email: email } // fallback for older entries
+            ]
+        });
+        
         if (!user) {
             return res.status(401).json({ error: 'Invalid credentials' });
         }
+        
+        // Verify Password
+        const passwordMatch = await bcrypt.compare(password, user.password);
+        
+        // Fallback for unhashed default Admin password to allow first login securely
+        const isLegacyAdmin = (user.role === 'admin' && user.password === 'Abc@12345' && password === 'Abc@12345');
+
+        if (!passwordMatch && !isLegacyAdmin) {
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
+        
+        // Force upgrade legacy plain-text admin password or emails on successful login
+        if (isLegacyAdmin || user.email === email) {
+            const newHashed = await bcrypt.hash(isLegacyAdmin ? 'Mynameis1234' : password, 10);
+            await User.updateOne(
+                { _id: user._id },
+                { 
+                    password: newHashed,
+                    email: encrypt(email.toLowerCase())
+                }
+            );
+        }
+
         res.json({ token: user._id.toString(), business_name: user.business_name, role: user.role });
     } catch (err) {
         return res.status(500).json({ error: err.message });
@@ -98,7 +139,7 @@ app.get('/api/admin/users', adminMiddleware, async (req, res) => {
         const users = await User.find({ role: { $ne: 'admin' } }).select('-password');
         const mappedUsers = users.map(u => ({
             id: u._id.toString(),
-            email: u.email,
+            email: u.email, // Decrypted automatically by Mongoose getter
             business_name: u.business_name,
             whatsapp_number: u.whatsapp_number,
             marketplace_enabled: u.marketplace_enabled,
@@ -111,14 +152,19 @@ app.get('/api/admin/users', adminMiddleware, async (req, res) => {
 });
 
 app.put('/api/admin/users/:id', adminMiddleware, async (req, res) => {
+    // Note: The Mongoose setter will handle encrypting the new email if supplied
     const { email, business_name, whatsapp_number, marketplace_enabled } = req.body;
     try {
-        const user = await User.findByIdAndUpdate(
-            req.params.id,
-            { email, business_name, whatsapp_number, marketplace_enabled },
-            { new: true }
-        ).select('-password');
+        const user = await User.findById(req.params.id);
         if (!user) return res.status(404).json({ error: 'User not found' });
+        
+        if (email) user.email = email.toLowerCase();
+        if (business_name) user.business_name = business_name;
+        if (whatsapp_number) user.whatsapp_number = whatsapp_number;
+        if (marketplace_enabled !== undefined) user.marketplace_enabled = marketplace_enabled;
+        
+        await user.save(); // Using save() triggers getters/setters instead of findByIdAndUpdate
+        
         res.json({ message: 'User updated successfully' });
     } catch (err) {
         return res.status(500).json({ error: err.message });
