@@ -48,6 +48,7 @@ app.post('/api/auth/register', async (req, res) => {
             role: user.role 
         });
     } catch (err) {
+        console.error("Register Error:", err);
         return res.status(500).json({ error: err.message });
     }
 });
@@ -97,6 +98,7 @@ app.post('/api/auth/login', async (req, res) => {
 
         res.json({ token: user._id.toString(), business_name: user.business_name, role: user.role });
     } catch (err) {
+        console.error("Login Error:", err);
         return res.status(500).json({ error: err.message });
     }
 });
