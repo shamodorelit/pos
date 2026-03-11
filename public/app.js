@@ -130,6 +130,10 @@ const productModal = document.getElementById('product-modal');
 const invoiceModal = document.getElementById('invoice-modal');
 const adminUserModal = document.getElementById('admin-user-modal');
 
+const mobileMenuBtn = document.getElementById('mobile-menu-btn');
+const sidebar = document.getElementById('sidebar');
+const sidebarOverlay = document.getElementById('sidebar-overlay');
+
 // ==== INITIALIZATION ====
 document.addEventListener('DOMContentLoaded', () => {
     checkAuth();
@@ -138,6 +142,18 @@ document.addEventListener('DOMContentLoaded', () => {
     
     setupNavigation();
     setupModals();
+    
+    // Mobile sidebar toggle
+    if (mobileMenuBtn && sidebar && sidebarOverlay) {
+        mobileMenuBtn.addEventListener('click', () => {
+            sidebar.classList.add('show-sidebar');
+            sidebarOverlay.classList.add('active');
+        });
+        sidebarOverlay.addEventListener('click', () => {
+            sidebar.classList.remove('show-sidebar');
+            sidebarOverlay.classList.remove('active');
+        });
+    }
 });
 
 function updateClock() {
@@ -158,6 +174,12 @@ function setupNavigation() {
             
             pageTitle.textContent = link.querySelector('.link-name').textContent;
             currentTab = target;
+            
+            // Close sidebar on mobile after navigation
+            if (sidebarOverlay && sidebarOverlay.classList.contains('active')) {
+                sidebar.classList.remove('show-sidebar');
+                sidebarOverlay.classList.remove('active');
+            }
             
             // Load specific view data
             if(target === 'dashboard-view') loadDashboard();

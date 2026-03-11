@@ -227,7 +227,17 @@ body {
 /* Responsive adjustments */
 @media(max-width: 768px) {
     .header-content { flex-direction: column; text-align: center; gap: 16px; }
-    .store-info h1 { font-size: 28px; }
-    .store-header { padding: 40px 20px; }
-    .products-grid { gap: 20px; }
+    .store-logo { width: 64px; height: 64px; font-size: 32px; border-radius: 16px; }
+    .store-info h1 { font-size: 26px; }
+    .store-header { padding: 30px 20px; }
+    
+    .search-bar input { padding: 14px 16px 14px 48px; font-size: 14px; }
+    .search-bar i { font-size: 22px; left: 16px; }
+    
+    .products-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 16px; }
+    
+    .product-image { height: 160px; }
+    .product-details { padding: 16px; }
+    .product-name { font-size: 15px; margin-bottom: 8px; }
+    .product-price { font-size: 20px; }
 }

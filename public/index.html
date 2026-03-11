@@ -63,6 +63,7 @@
 
     <!-- Application Wrapper (hidden until auth) -->
     <div id="app-wrapper" class="app-wrapper">
+        <div id="sidebar-overlay" class="sidebar-overlay"></div>
         <!-- Sidebar Navigation -->
         <aside class="sidebar" id="sidebar">
         <div class="logo-container">
@@ -113,7 +114,10 @@
     <main class="main-content">
         <!-- Header -->
         <header class="top-header">
-            <div class="header-title">
+            <div class="header-title" style="display: flex; align-items: center; gap: 12px;">
+                <button id="mobile-menu-btn" class="btn-icon-only d-none-desktop" style="background:none; border:none; font-size: 28px; cursor:pointer; color: var(--text-main); margin-left: -5px; display: none;">
+                    <i class='bx bx-menu'></i>
+                </button>
                 <h1 id="page-title">Dashboard</h1>
             </div>
             <div class="header-right">

@@ -14,7 +14,7 @@ const connectDB = async () => {
         const db = await mongoose.connect(uri, {
             serverSelectionTimeoutMS: 5000 // Tweak timeout down so Serverless fails faster instead of hanging
         });
-        
+
         cachedDb = db;
         console.log('Connected to MongoDB database');
         return db;
