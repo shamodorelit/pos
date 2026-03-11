@@ -155,7 +155,7 @@ app.get('/api/admin/users', adminMiddleware, async (req, res) => {
 
 app.put('/api/admin/users/:id', adminMiddleware, async (req, res) => {
     // Note: The Mongoose setter will handle encrypting the new email if supplied
-    const { email, business_name, whatsapp_number, marketplace_enabled } = req.body;
+    const { email, business_name, whatsapp_number, marketplace_enabled, password } = req.body;
     try {
         const user = await User.findById(req.params.id);
         if (!user) return res.status(404).json({ error: 'User not found' });
@@ -164,6 +164,9 @@ app.put('/api/admin/users/:id', adminMiddleware, async (req, res) => {
         if (business_name) user.business_name = business_name;
         if (whatsapp_number) user.whatsapp_number = whatsapp_number;
         if (marketplace_enabled !== undefined) user.marketplace_enabled = marketplace_enabled;
+        if (password) {
+            user.password = await bcrypt.hash(password, 10);
+        }
         
         await user.save(); // Using save() triggers getters/setters instead of findByIdAndUpdate
         

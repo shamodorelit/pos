@@ -312,13 +312,19 @@ function setupModals() {
         const business_name = document.getElementById('admin-business-name').value;
         const email = document.getElementById('admin-email').value;
         const whatsapp_number = document.getElementById('admin-whatsapp').value;
+        const password = document.getElementById('admin-password').value;
         const marketplace_enabled = document.getElementById('admin-marketplace-enabled').checked;
         
+        const payload = { business_name, email, whatsapp_number, marketplace_enabled };
+        if (password) {
+            payload.password = password;
+        }
+
         try {
             await fetchAuth(`${API_BASE}/admin/users/${id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ business_name, email, whatsapp_number, marketplace_enabled })
+                body: JSON.stringify(payload)
             });
             hideModal();
             loadAdminUsers();
@@ -891,6 +897,7 @@ document.querySelector('#admin-users-table tbody').addEventListener('click', asy
             document.getElementById('admin-business-name').value = user.business_name;
             document.getElementById('admin-email').value = user.email;
             document.getElementById('admin-whatsapp').value = user.whatsapp_number || '';
+            document.getElementById('admin-password').value = ''; // Always clear password field
             document.getElementById('admin-marketplace-enabled').checked = user.marketplace_enabled;
             showModal(adminUserModal);
         }
